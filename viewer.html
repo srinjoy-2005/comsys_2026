@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Annotation Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { background-color: #1a202c; color: #e2e8f0; font-family: sans-serif; }
+        .font-bengali { font-family: 'Noto Sans Bengali', 'SolaimanLipi', 'Siyam Rupali', 'Vrinda', sans-serif; }
+
+        /* Tooltip for label on hover */
+        .crop-card { transition: transform 0.12s ease, box-shadow 0.12s ease; }
+        .crop-card:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0,0,0,0.5); }
+
+        /* Search highlight */
+        .crop-card.match-highlight { outline: 2px solid #f59e0b; }
+
+        /* Badge pulse animation */
+        @keyframes fadein { from { opacity:0; transform: scale(0.95); } to { opacity:1; transform: scale(1); } }
+        .crop-card { animation: fadein 0.15s ease; }
+
+        /* Stats bar */
+        #stats-bar { background: #111827; border-bottom: 1px solid #374151; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col h-screen overflow-hidden">
+
+    <!-- Top Header & Controls -->
+    <header class="bg-gray-900 p-4 shadow-md flex flex-wrap justify-between items-center gap-3 shrink-0">
+        <h1 class="text-xl font-bold text-purple-400 flex items-center gap-2">
+            <span>👁</span> OCR Annotation Viewer
+            <span class="text-xs font-normal text-gray-500 ml-1">(read-only)</span>
+        </h1>
+
+        <div class="flex flex-wrap gap-4 items-center">
+
+            <!-- Annotation Source Toggle -->
+            <div class="flex flex-col gap-1">
+                <label class="text-xs text-gray-400">1. Annotation Source</label>
+                <div class="flex rounded overflow-hidden border border-gray-600">
+                    <button id="mode-json" onclick="setMode('json')"
+                        class="px-3 py-1 text-sm font-semibold bg-purple-700 text-white transition-colors">JSON Folder</button>
+                    <button id="mode-csv" onclick="setMode('csv')"
+                        class="px-3 py-1 text-sm font-semibold bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors">CSV File</button>
+                </div>
+            </div>
+
+            <!-- JSON Folder Upload -->
+            <div id="json-upload-section" class="flex flex-col gap-1 border-l border-gray-700 pl-4">
+                <label class="text-xs text-gray-400">2a. Upload JSON Annotations Folder</label>
+                <input type="file" id="json-upload" accept=".json" webkitdirectory directory multiple class="text-sm">
+            </div>
+
+            <!-- CSV Upload (hidden initially) -->
+            <div id="csv-upload-section" class="flex flex-col gap-1 border-l border-gray-700 pl-4 hidden">
+                <label class="text-xs text-gray-400">2b. Upload CSV File</label>
+                <input type="file" id="csv-upload" accept=".csv" class="text-sm">
+            </div>
+
+            <!-- Images Folder -->
+            <div class="flex flex-col gap-1 border-l border-gray-700 pl-4">
+                <label class="text-xs text-gray-400">3. Upload Images Folder</label>
+                <input type="file" id="image-upload" accept="image/*" webkitdirectory directory multiple class="text-sm">
+            </div>
+
+            <!-- Page Select -->
+            <div class="flex flex-col gap-1 border-l border-gray-700 pl-4">
+                <label class="text-xs text-gray-400">4. Select Page</label>
+                <select id="page-select" class="bg-gray-800 text-white p-1 rounded text-sm min-w-[160px]" disabled>
+                    <option value="">-- No annotations loaded --</option>
+                </select>
+            </div>
+
+            <!-- Search -->
+            <div class="flex flex-col gap-1 border-l border-gray-700 pl-4">
+                <label class="text-xs text-gray-400">5. Search Label</label>
+                <input type="text" id="search-box" placeholder="Type to filter…"
+                    class="bg-gray-800 text-white p-1 rounded text-sm w-40 font-bengali border border-gray-600 focus:border-purple-500 outline-none">
+            </div>
+
+        </div>
+    </header>
+
+    <!-- Stats Bar -->
+    <div id="stats-bar" class="px-4 py-1.5 flex gap-6 text-xs text-gray-400 items-center shrink-0 hidden">
+        <span>Page: <strong id="stat-page" class="text-white">—</strong></span>
+        <span>Total crops: <strong id="stat-total" class="text-white">0</strong></span>
+        <span>Visible: <strong id="stat-visible" class="text-white">0</strong></span>
+        <span>Image: <strong id="stat-img-size" class="text-white">—</strong></span>
+        <span id="stat-source-badge" class="ml-auto px-2 py-0.5 rounded font-bold bg-gray-800">—</span>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-auto p-4 flex">
+        <div id="grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 w-full content-start">
+            <!-- Cards will be generated here -->
+            <div class="col-span-full text-center text-gray-500 mt-10" id="empty-state">
+                Upload an annotations folder (JSON) or a CSV file, then upload the corresponding images folder and select a page.
+            </div>
+        </div>
+    </main>
+
+    <!-- Right-side Context Pane -->
+    <div id="context-pane" class="hidden fixed right-0 top-0 bottom-0 w-2/5 bg-gray-950 border-l border-gray-700 z-30 flex flex-col shadow-2xl overflow-y-auto">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700 sticky top-0 bg-gray-950">
+            <div>
+                <p class="text-xs text-gray-400 uppercase font-bold tracking-wider">Context View</p>
+                <p id="context-title" class="text-sm text-white font-mono mt-0.5"></p>
+                <p id="context-label" class="text-base font-bengali text-purple-300 mt-0.5"></p>
+            </div>
+            <button onclick="document.getElementById('context-pane').classList.add('hidden')" class="text-gray-400 hover:text-white text-xl px-2">✕</button>
+        </div>
+        <div class="flex-1 p-4 flex flex-col items-start">
+            <p class="text-xs text-yellow-400 mb-3">🟡 Highlighted box = selected crop. Surrounding area is dimmed.</p>
+            <canvas id="context-canvas" class="max-w-full rounded border border-gray-700"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // ==================== State ====================
+        let parsedData   = [];   // [{page_id, bboxes:[{unicode_value, bbox, source}]}]
+        let imageFiles   = {};   // { nameWithoutExt: File }
+        let currentPageCanvas = null;
+        let currentMode  = 'json'; // 'json' | 'csv'
+        let allCards     = [];   // [{card, decodedLabel}]
+
+        // ==================== Unicode helpers ====================
+        function decodeUnicodeValue(val) {
+            if (!val) return "";
+            let matches = val.match(/U\+([0-9A-Fa-f]{4,6})/g);
+            if (!matches || matches.length === 0) return val;
+            try {
+                return matches.map(m => String.fromCodePoint(parseInt(m.slice(2), 16))).join('');
+            } catch(e) { return val; }
+        }
+
+        // ==================== Mode Toggle ====================
+        function setMode(mode) {
+            currentMode = mode;
+            const jsonBtn  = document.getElementById('mode-json');
+            const csvBtn   = document.getElementById('mode-csv');
+            const jsonSec  = document.getElementById('json-upload-section');
+            const csvSec   = document.getElementById('csv-upload-section');
+
+            if (mode === 'json') {
+                jsonBtn.className = "px-3 py-1 text-sm font-semibold bg-purple-700 text-white transition-colors";
+                csvBtn.className  = "px-3 py-1 text-sm font-semibold bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors";
+                jsonSec.classList.remove('hidden');
+                csvSec.classList.add('hidden');
+            } else {
+                csvBtn.className  = "px-3 py-1 text-sm font-semibold bg-purple-700 text-white transition-colors";
+                jsonBtn.className = "px-3 py-1 text-sm font-semibold bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors";
+                csvSec.classList.remove('hidden');
+                jsonSec.classList.add('hidden');
+            }
+            parsedData = [];
+            resetUI();
+        }
+
+        function resetUI() {
+            const sel = document.getElementById('page-select');
+            sel.innerHTML = '<option value="">-- No annotations loaded --</option>';
+            sel.disabled = true;
+            document.getElementById('grid').innerHTML = '<div class="col-span-full text-center text-gray-500 mt-10" id="empty-state">Upload an annotations folder (JSON) or a CSV file, then upload the corresponding images folder and select a page.</div>';
+            document.getElementById('stats-bar').classList.add('hidden');
+        }
+
+        // ==================== JSON parsing (LabelMe format) ====================
+        document.getElementById('json-upload').addEventListener('change', (e) => {
+            const files = [...e.target.files].filter(f => f.name.endsWith('.json'));
+            if (!files.length) return;
+
+            parsedData = [];
+            let pending = files.length;
+
+            files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    try {
+                        const json = JSON.parse(ev.target.result);
+                        // LabelMe format: json.shapes = [{label, points:[[x1,y1],[x2,y2]], shape_type}]
+                        // Use imagePath as page_id (strip extension for matching)
+                        const rawName = json.imagePath || file.name.replace(/\.json$/, '');
+                        const pageId = rawName.replace(/\.[^.]+$/, ''); // strip image extension if present
+
+                        const bboxes = (json.shapes || [])
+                            .filter(s => s.shape_type === 'rectangle' && s.points && s.points.length >= 2)
+                            .map(s => {
+                                const xs = s.points.map(p => p[0]);
+                                const ys = s.points.map(p => p[1]);
+                                return {
+                                    unicode_value: s.label || '',
+                                    bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+                                    description: s.description || ''
+                                };
+                            });
+
+                        parsedData.push({ page_id: pageId, bboxes, source: 'json' });
+                    } catch(err) {
+                        console.warn('Failed to parse JSON:', file.name, err);
+                    }
+                    if (--pending === 0) {
+                        // Sort by page_id
+                        parsedData.sort((a,b) => a.page_id.localeCompare(b.page_id, undefined, {numeric:true}));
+                        populatePageSelect();
+                    }
+                };
+                reader.readAsText(file);
+            });
+        });
+
+        // ==================== CSV parsing (same format as annotation tool) ====================
+        document.getElementById('csv-upload').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                parseCustomCSV(ev.target.result);
+                populatePageSelect();
+            };
+            reader.readAsText(file);
+        });
+
+        function parseCustomCSV(text) {
+            let rows = text.trim().split('\n');
+            parsedData = [];
+            let startIdx = rows[0].includes('page_id') ? 1 : 0;
+
+            for (let i = startIdx; i < rows.length; i++) {
+                let line = rows[i].trim();
+                if (!line) continue;
+
+                let firstComma = line.indexOf(',');
+                if (firstComma === -1) continue;
+
+                let pageId = line.substring(0, firstComma).replace(/^"|"$/g, '').trim();
+                let preds  = line.substring(firstComma + 1).replace(/^"|"$/g, '').trim();
+                preds = preds.replace(/""/g, '"');
+
+                let bboxes = [];
+                let objRegex = /\{[^}]+\}/g;
+                let match;
+                while ((match = objRegex.exec(preds)) !== null) {
+                    let objStr = match[0];
+                    let unicodeMatch = objStr.match(/"unicode_value"\s*:\s*"([^"]+)"/);
+                    let bboxMatch    = objStr.match(/"bbox"\s*:\s*\[([0-9.,\s-]+)\]/);
+                    if (unicodeMatch && bboxMatch) {
+                        let bbox = bboxMatch[1].split(',').map(n => parseFloat(n.trim()));
+                        bboxes.push({ unicode_value: unicodeMatch[1], bbox });
+                    }
+                }
+                parsedData.push({ page_id: pageId, bboxes, source: 'csv' });
+            }
+        }
+
+        // ==================== Image upload ====================
+        document.getElementById('image-upload').addEventListener('change', (e) => {
+            imageFiles = {};
+            for (let file of e.target.files) {
+                let nameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                imageFiles[nameWithoutExt] = file;
+            }
+            const sel = document.getElementById('page-select');
+            if (sel.value) renderPage(sel.value);
+        });
+
+        // ==================== Page select ====================
+        function populatePageSelect() {
+            const select = document.getElementById('page-select');
+            select.innerHTML = '<option value="">-- Select Page --</option>';
+            parsedData.forEach(p => {
+                let opt = document.createElement('option');
+                opt.value = p.page_id;
+                opt.innerText = p.page_id + ` (${p.bboxes.length} crops)`;
+                select.appendChild(opt);
+            });
+            select.disabled = false;
+        }
+
+        document.getElementById('page-select').addEventListener('change', (e) => {
+            if (e.target.value) {
+                renderPage(e.target.value);
+            } else {
+                document.getElementById('grid').innerHTML = '<div class="col-span-full text-center text-gray-500 mt-10">Select a page to view.</div>';
+                document.getElementById('stats-bar').classList.add('hidden');
+            }
+        });
+
+        // ==================== Search ====================
+        document.getElementById('search-box').addEventListener('input', (e) => {
+            const q = e.target.value.trim().toLowerCase();
+            let visible = 0;
+            allCards.forEach(({card, decodedLabel}) => {
+                const show = !q || decodedLabel.toLowerCase().includes(q);
+                card.classList.toggle('hidden', !show);
+                card.classList.toggle('match-highlight', !!q && show);
+                if (show) visible++;
+            });
+            document.getElementById('stat-visible').textContent = visible;
+        });
+
+        // ==================== Render Page ====================
+        async function renderPage(pageId) {
+            let pageData = parsedData.find(p => p.page_id === pageId);
+            if (!pageData) return;
+
+            // Update stats
+            const statsBar = document.getElementById('stats-bar');
+            statsBar.classList.remove('hidden');
+            document.getElementById('stat-page').textContent = pageId;
+            document.getElementById('stat-total').textContent = pageData.bboxes.length;
+            document.getElementById('stat-visible').textContent = pageData.bboxes.length;
+
+            const sourceBadge = document.getElementById('stat-source-badge');
+            if (pageData.source === 'json') {
+                sourceBadge.textContent = 'JSON (LabelMe)';
+                sourceBadge.className = 'ml-auto px-2 py-0.5 rounded font-bold bg-purple-900 text-purple-300 text-xs';
+            } else {
+                sourceBadge.textContent = 'CSV';
+                sourceBadge.className = 'ml-auto px-2 py-0.5 rounded font-bold bg-blue-900 text-blue-300 text-xs';
+            }
+
+            // Clear search
+            document.getElementById('search-box').value = '';
+            allCards = [];
+
+            let file = imageFiles[pageId];
+            if (!file) {
+                document.getElementById('grid').innerHTML = `<div class="col-span-full text-center text-red-400 mt-10">No image found for page: <strong>${pageId}</strong>. Please ensure the image is uploaded and the filename matches (e.g. ${pageId}.jpg / .png).</div>`;
+                document.getElementById('stat-img-size').textContent = '—';
+                return;
+            }
+
+            document.getElementById('grid').innerHTML = `<div class="col-span-full text-center text-gray-400 mt-10">Loading image and cropping...</div>`;
+
+            let img = new Image();
+            img.src = URL.createObjectURL(file);
+            await new Promise(r => img.onload = r);
+
+            document.getElementById('stat-img-size').textContent = `${img.width} × ${img.height}`;
+
+            let canvas = document.createElement('canvas');
+            canvas.width  = img.width;
+            canvas.height = img.height;
+            let ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            currentPageCanvas = canvas;
+
+            let grid = document.getElementById('grid');
+            grid.innerHTML = '';
+
+            pageData.bboxes.forEach((b, index) => {
+                const [x_min, y_min, x_max, y_max] = b.bbox;
+                let w = Math.max(1, x_max - x_min);
+                let h = Math.max(1, y_max - y_min);
+
+                let cropCanvas = document.createElement('canvas');
+                cropCanvas.width  = w;
+                cropCanvas.height = h;
+                cropCanvas.getContext('2d').drawImage(canvas, x_min, y_min, w, h, 0, 0, w, h);
+
+                const decodedLabel = decodeUnicodeValue(b.unicode_value);
+                const cropIdx = index + 1;
+                const total   = pageData.bboxes.length;
+
+                // ---- Card ----
+                let card = document.createElement('div');
+                card.className = "crop-card border border-gray-700 p-2 rounded flex flex-col gap-2 relative bg-gray-800 shadow";
+
+                // Top bar
+                let topBar = document.createElement('div');
+                topBar.className = "flex justify-between items-center gap-1";
+
+                // Left: index badge
+                let leftGroup = document.createElement('div');
+                leftGroup.className = 'flex items-center gap-1';
+
+                let idxBadge = document.createElement('span');
+                idxBadge.innerText = `#${cropIdx}`;
+                idxBadge.className = "text-[11px] font-bold text-white bg-purple-700 px-1.5 py-0.5 rounded";
+                idxBadge.title = `Crop ${cropIdx} of ${total}`;
+
+                // Source badge
+                let srcBadge = document.createElement('span');
+                srcBadge.innerText = pageData.source === 'json' ? 'JSON' : 'CSV';
+                srcBadge.className = pageData.source === 'json'
+                    ? "text-[10px] uppercase font-bold text-purple-300 bg-purple-900/60 px-1 rounded"
+                    : "text-[10px] uppercase font-bold text-blue-300 bg-blue-900/60 px-1 rounded";
+
+                leftGroup.appendChild(idxBadge);
+                leftGroup.appendChild(srcBadge);
+
+                // Right: Context button
+                let rightGroup = document.createElement('div');
+                rightGroup.className = 'flex items-center gap-1';
+
+                let viewBtn = document.createElement('button');
+                viewBtn.innerText = "🔍";
+                viewBtn.title = "View in full image context";
+                viewBtn.className = "bg-indigo-800 hover:bg-indigo-600 text-white px-2 py-0.5 rounded text-[11px] font-bold";
+                viewBtn.onclick = () => showContextPane(b.bbox, cropIdx, total, decodedLabel);
+
+                // BBox info button
+                let bboxBtn = document.createElement('button');
+                bboxBtn.innerText = "📐";
+                bboxBtn.title = `bbox: [${b.bbox.map(v=>v.toFixed(1)).join(', ')}]  |  size: ${w}×${h}`;
+                bboxBtn.className = "bg-gray-700 hover:bg-gray-600 text-white px-2 py-0.5 rounded text-[11px]";
+
+                rightGroup.appendChild(viewBtn);
+                rightGroup.appendChild(bboxBtn);
+                topBar.appendChild(leftGroup);
+                topBar.appendChild(rightGroup);
+
+                // Crop image
+                let imgContainer = document.createElement('div');
+                imgContainer.className = "bg-white p-1 rounded min-h-[50px] flex items-center justify-center border border-gray-600";
+                let cropImg = document.createElement('img');
+                cropImg.src = cropCanvas.toDataURL();
+                cropImg.className = "max-w-full max-h-[120px] object-contain";
+                imgContainer.appendChild(cropImg);
+
+                // Label display (read-only)
+                let labelDisplay = document.createElement('div');
+                labelDisplay.className = "font-bengali text-xs bg-gray-700 text-yellow-300 px-2 py-1.5 rounded flex justify-between items-center gap-2";
+                labelDisplay.title = `Raw value: ${b.unicode_value}`;
+
+                let labelPrefix = document.createElement('span');
+                labelPrefix.className = 'text-gray-400 shrink-0 text-[10px]';
+                labelPrefix.textContent = 'Label:';
+
+                let labelValue = document.createElement('span');
+                labelValue.className = 'font-bold text-base tracking-wide text-center flex-1';
+                labelValue.textContent = decodedLabel || '(empty)';
+
+                // Copy button
+                let copyBtn = document.createElement('button');
+                copyBtn.innerText = "⧉";
+                copyBtn.title = "Copy label to clipboard";
+                copyBtn.className = "text-gray-400 hover:text-white text-xs shrink-0 px-1";
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText(decodedLabel).then(() => {
+                        copyBtn.innerText = "✓";
+                        setTimeout(() => copyBtn.innerText = "⧉", 1200);
+                    });
+                };
+
+                labelDisplay.appendChild(labelPrefix);
+                labelDisplay.appendChild(labelValue);
+                labelDisplay.appendChild(copyBtn);
+
+                // Raw unicode (collapsible on click)
+                let rawRow = document.createElement('div');
+                rawRow.className = "text-[10px] text-gray-500 font-mono truncate cursor-pointer hover:text-gray-300 transition-colors";
+                rawRow.textContent = b.unicode_value || '—';
+                rawRow.title = "Raw unicode value (click to toggle full)";
+                rawRow.onclick = () => {
+                    rawRow.classList.toggle('truncate');
+                    rawRow.classList.toggle('whitespace-normal');
+                };
+
+                // Bbox size info
+                let sizeRow = document.createElement('div');
+                sizeRow.className = "text-[10px] text-gray-600 flex gap-3";
+                sizeRow.innerHTML = `<span>W:<strong class='text-gray-400'>${w}px</strong></span><span>H:<strong class='text-gray-400'>${h}px</strong></span><span>x:<strong class='text-gray-400'>${x_min.toFixed(0)}</strong> y:<strong class='text-gray-400'>${y_min.toFixed(0)}</strong></span>`;
+
+                card.appendChild(topBar);
+                card.appendChild(imgContainer);
+                card.appendChild(labelDisplay);
+                card.appendChild(rawRow);
+                card.appendChild(sizeRow);
+
+                grid.appendChild(card);
+                allCards.push({ card, decodedLabel });
+            });
+
+            if (pageData.bboxes.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-center text-gray-500 mt-10">No annotations found for this page.</div>`;
+            }
+        }
+
+        // ==================== Context Pane ====================
+        function showContextPane(bbox, cropIdx, total, label) {
+            const pane       = document.getElementById('context-pane');
+            const paneCanvas = document.getElementById('context-canvas');
+            const paneTitle  = document.getElementById('context-title');
+            const paneLabel  = document.getElementById('context-label');
+
+            pane.classList.remove('hidden');
+            paneTitle.textContent = `Crop #${cropIdx} of ${total}  ·  bbox [${bbox.map(v=>v.toFixed(0)).join(', ')}]`;
+            paneLabel.textContent = label || '';
+
+            if (!currentPageCanvas) return;
+
+            const maxW  = pane.clientWidth - 32;
+            const maxH  = pane.clientHeight - 100;
+            const scale = Math.min(maxW / currentPageCanvas.width, maxH / currentPageCanvas.height, 1);
+            paneCanvas.width  = Math.round(currentPageCanvas.width  * scale);
+            paneCanvas.height = Math.round(currentPageCanvas.height * scale);
+
+            const ctx = paneCanvas.getContext('2d');
+            ctx.drawImage(currentPageCanvas, 0, 0, paneCanvas.width, paneCanvas.height);
+
+            // Dark overlay
+            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillRect(0, 0, paneCanvas.width, paneCanvas.height);
+
+            // Re-draw highlighted crop
+            const [x1, y1, x2, y2] = bbox;
+            const sx = x1 * scale, sy = y1 * scale;
+            const sw = (x2 - x1) * scale, sh = (y2 - y1) * scale;
+            ctx.drawImage(currentPageCanvas, x1, y1, x2-x1, y2-y1, sx, sy, sw, sh);
+
+            // Highlight rectangle
+            ctx.strokeStyle = '#a78bfa';
+            ctx.lineWidth   = 3;
+            ctx.strokeRect(sx - 2, sy - 2, sw + 4, sh + 4);
+
+            // Scroll to centre the bbox
+            pane.scrollTop = Math.max(0, sy - pane.clientHeight / 2 + sh / 2);
+        }
+    </script>
+
+</body>
+</html>
